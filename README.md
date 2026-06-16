@@ -65,11 +65,65 @@ We use a referenced schema architecture in MongoDB to prevent huge nested docume
           └──────────────┘
 ```
 
-* **User**: Manages roles (`user` or `admin`), handles password hashing via `bcrypt`, and generates JWT access tokens.
-* **Product**: Catalog system with stock inventory numbers and an `isEnabled` flag to toggle visibility on frontend feeds.
-* **Cart & CartItem**: Split into two collections to keep documents lightweight. CartItem contains a compound unique index on `{ cart, product }` to prevent multiple rows of the same product.
-* **Order & OrderItem**: Standard invoice/checkout system. Crucially, the **`OrderItem` collection stores the unit price at the time of purchase** (`price: product.price`). This keeps historical order data safe from future product price changes.
-* **Inventory Hook**: Placing an order decrements the product `stock` count. If a user cancels an order, the system automatically restores that stock to the catalog.
+### Database Schema Details
+
+#### 1. User Schema (`User`)
+Represents account profiles, role permissions, and credentials.
+* `username`: `String` (Required, Unique, Lowercase, Trimmed, Indexed)
+* `email`: `String` (Required, Unique, Lowercase, Trimmed)
+* `password`: `String` (Required, Hashed via bcrypt pre-save)
+* `role`: `String` (Enum: `["user", "admin"]`, Default: `"user"`)
+* `timestamps`: Automatically populated `createdAt` and `updatedAt`.
+
+#### 2. Product Schema (`Product`)
+Catalog containing the inventory products and stock quantities.
+* `name`: `String` (Required, Trimmed)
+* `description`: `String` (Required, Trimmed)
+* `price`: `Number` (Required, Minimum: 0)
+* `stock`: `Number` (Required, Minimum: 0)
+* `category`: `String` (Required, Trimmed)
+* `isEnabled`: `Boolean` (Default: `true`)
+* `timestamps`: Automatically populated `createdAt` and `updatedAt`.
+
+#### 3. Cart Schema (`Cart`)
+A user's active shopping cart session (1-to-1 mapping to User).
+* `user`: `ObjectId` (Ref: `User`, Required)
+* `items`: `[ObjectId]` (Ref: `CartItem`, Array of references to the items inside the cart)
+* `timestamps`: Automatically populated `createdAt` and `updatedAt`.
+
+#### 4. CartItem Schema (`CartItem`)
+Detailed entry for a specific product inside a cart.
+* `cart`: `ObjectId` (Ref: `Cart`, Required)
+* `product`: `ObjectId` (Ref: `Product`, Required)
+* `quantity`: `Number` (Required, Default: `1`, Minimum: `1`)
+* *Compound Index*: `{ cart: 1, product: 1 }` (Unique constraint to prevent duplicate items for the same product in a single cart)
+* `timestamps`: Automatically populated `createdAt` and `updatedAt`.
+
+#### 5. Order Schema (`Order`)
+Represents checkouts and invoice transactions.
+* `user`: `ObjectId` (Ref: `User`, Required)
+* `items`: `[ObjectId]` (Ref: `OrderItem`, Required, Array of references to the order line items)
+* `status`: `String` (Required, Trimmed, Enum: `["pending", "processing", "shipped", "delivered", "cancelled"]`, Default: `"pending"`)
+* `totalAmount`: `Number` (Required, Minimum: 0)
+* `shippingAddress`: `String` (Required, Trimmed)
+* `paymentMethod`: `String` (Required, Trimmed, Enum: `["COD", "UPI", "DEBIT", "CREDIT", "WALLET"]`, Default: `"COD"`)
+* `paymentStatus`: `String` (Required, Trimmed, Enum: `["pending", "completed", "failed"]`, Default: `"pending"`)
+* `timestamps`: Automatically populated `createdAt` and `updatedAt`.
+
+#### 6. OrderItem Schema (`OrderItem`)
+Captures transactional metadata for ordered products (preserving checkout prices).
+* `order`: `ObjectId` (Ref: `Order`, Required)
+* `product`: `ObjectId` (Ref: `Product`, Required)
+* `quantity`: `Number` (Required, Minimum: 1)
+* `price`: `Number` (Required, Minimum: 0) - Stores the unit price at checkout time to lock historical data.
+* `timestamps`: Automatically populated `createdAt` and `updatedAt`.
+
+---
+
+#### Inventory Rules (Hooks)
+* **On Purchase**: Placing an order decrements the product `stock` count by the ordered quantity.
+* **On Cancellation**: Cancelling an order restores the matching product `stock` count.
+
 
 ---
 
